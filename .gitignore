@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Build
+dist/
+server/dist/
+
+# Environment variables
+.env
+.env.*
+server/.env
+server/.env.*
+
+# Allow example files
+!.env.example
+!server/.env.example
+
+# VS Code
+.vscode/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
