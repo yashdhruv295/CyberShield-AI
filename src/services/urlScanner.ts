@@ -1,3 +1,5 @@
+import { postJson, waitForAnalysis } from "./api";
+
 export interface ScanStats {
   harmless: number;
   malicious: number;
@@ -8,59 +10,24 @@ export interface ScanStats {
 
 export interface UrlScanResult {
   success: boolean;
-
   pending?: boolean;
-
   url: string;
-
   analysisId: string;
-
   status: string;
-
   stats: ScanStats;
-
   riskScore: number;
-
   riskLevel: string;
-
   message?: string;
 }
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:5000";
-
 export async function scanUrl(
-  url: string
+  url: string,
+  onProgress?: (message: string) => void
 ): Promise<UrlScanResult> {
+  const first = await postJson<UrlScanResult>("/api/scan-url", { url });
 
-  const response =
-    await fetch(
-      `${API_URL}/api/scan-url`,
-      {
-        method: "POST",
+  if (!first.pending) return first;
 
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-
-        body:
-          JSON.stringify({
-            url,
-          }),
-      }
-    );
-
-  const data =
-    await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.message ||
-        "Unable to scan URL."
-    );
-  }
-
-  return data;
+  const final = await waitForAnalysis(first, { intervalMs: 20000, maxAttempts: 6, onProgress });
+  return { ...final, url: first.url || url };
 }

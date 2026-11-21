@@ -4558,3 +4558,17 @@ svg.spin {
     font-size: 18px;
   }
 }
+.analytics-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7f8da0;
+}
+
+@media (max-width: 800px) {
+  .analytics-grid,
+  .analytics-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

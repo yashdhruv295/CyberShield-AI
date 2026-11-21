@@ -1,326 +1,182 @@
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { BarChart3, Info } from "lucide-react";
 import {
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  KeyRound,
-  ShieldCheck,
-  XCircle,
-} from "lucide-react";
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 
-import {
-  useMemo,
-  useState,
-} from "react";
+import { db } from "../firebase/firebase";
+import { getLoggedUser } from "../services/scanHistory";
 
-export default function PasswordChecker() {
-  const [
-    password,
-    setPassword,
-  ] = useState("");
+type ScanRecord = {
+  id: string;
+  type?: string;
+  riskLevel?: string;
+  riskScore?: number;
+};
 
-  const [
-    showPassword,
-    setShowPassword,
-  ] = useState(false);
+const RISK_LEVELS = [
+  { name: "SAFE", color: "#25f4ae" },
+  { name: "LOW RISK", color: "#4cc9f0" },
+  { name: "SUSPICIOUS", color: "#ffb020" },
+  { name: "HIGH RISK", color: "#ff4d6d" },
+];
 
-  const analysis =
-    useMemo(() => {
-      const tests = {
-        length:
-          password.length >=
-          12,
+const SCAN_TYPES = ["URL", "EMAIL", "MESSAGE", "QR", "FILE"];
 
-        uppercase:
-          /[A-Z]/.test(
-            password
-          ),
+const tooltipStyle = {
+  background: "#0b1324",
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 10,
+  color: "#ffffff",
+};
 
-        lowercase:
-          /[a-z]/.test(
-            password
-          ),
+export default function Analytics() {
+  const navigate = useNavigate();
+  const [scans, setScans] = useState<ScanRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-        number:
-          /\d/.test(
-            password
-          ),
+  useEffect(() => {
+    const user = getLoggedUser();
+    if (!user?.id) {
+      navigate("/login");
+      return;
+    }
 
-        special:
-          /[^A-Za-z0-9]/.test(
-            password
-          ),
-      };
+    const scansQuery = query(collection(db, "scans"), where("userId", "==", user.id));
 
-      let score = 0;
-
-      if (tests.length) {
-        score += 20;
+    return onSnapshot(
+      scansQuery,
+      (snapshot) => {
+        setScans(snapshot.docs.map((document) => ({ id: document.id, ...document.data() })));
+        setError("");
+        setLoading(false);
+      },
+      (snapshotError) => {
+        console.error(snapshotError);
+        setError("Unable to load analytics. Check your Firebase Firestore rules.");
+        setLoading(false);
       }
+    );
+  }, [navigate]);
 
-      if (
-        tests.uppercase
-      ) {
-        score += 15;
-      }
-
-      if (
-        tests.lowercase
-      ) {
-        score += 15;
-      }
-
-      if (tests.number) {
-        score += 15;
-      }
-
-      if (
-        tests.special
-      ) {
-        score += 25;
-      }
-
-      if (
-        password.length >=
-        16
-      ) {
-        score += 10;
-      }
-
-      const lower =
-        password.toLowerCase();
-
-      const commonPatterns = [
-        "password",
-        "123456",
-        "qwerty",
-        "admin",
-        "welcome",
-        "letmein",
-      ];
-
-      if (
-        commonPatterns.some(
-          (pattern) =>
-            lower.includes(
-              pattern
-            )
-        )
-      ) {
-        score -= 25;
-      }
-
-      if (
-        /(.)\1\1/.test(
-          password
-        )
-      ) {
-        score -= 10;
-      }
-
-      score =
-        Math.max(
-          0,
-          Math.min(
-            100,
-            score
-          )
-        );
-
-      let label =
-        "Very Weak";
-
-      if (score >= 80) {
-        label = "Strong";
-      } else if (
-        score >= 60
-      ) {
-        label = "Good";
-      } else if (
-        score >= 35
-      ) {
-        label = "Weak";
-      }
-
-      return {
-        tests,
-        score,
-        label,
-      };
-    }, [password]);
-
-  const Requirement = ({
-    passed,
-    text,
-  }: {
-    passed: boolean;
-    text: string;
-  }) => (
-    <li
-      className={
-        passed
-          ? "requirement-pass"
-          : ""
-      }
-    >
-      {passed ? (
-        <CheckCircle2
-          size={18}
-        />
-      ) : (
-        <XCircle
-          size={18}
-        />
-      )}
-
-      {text}
-    </li>
+  const riskData = useMemo(
+    () =>
+      RISK_LEVELS.map((level) => ({
+        ...level,
+        value: scans.filter((scan) => String(scan.riskLevel || "").toUpperCase() === level.name)
+          .length,
+      })).filter((item) => item.value > 0),
+    [scans]
   );
 
+  const typeData = useMemo(
+    () =>
+      SCAN_TYPES.map((type) => ({
+        type,
+        scans: scans.filter((scan) => String(scan.type || "").toUpperCase() === type).length,
+      })),
+    [scans]
+  );
+
+  const total = scans.length;
+  const threats = scans.filter((scan) =>
+    ["SUSPICIOUS", "HIGH RISK"].includes(String(scan.riskLevel || "").toUpperCase())
+  ).length;
+  const averageRisk = total
+    ? Math.round(scans.reduce((sum, scan) => sum + Number(scan.riskScore || 0), 0) / total)
+    : 0;
+
   return (
-    <main className="scanner-page">
-      <div className="scanner-container">
-        <div className="scanner-header">
-          <div className="scanner-icon">
-            <KeyRound
-              size={30}
-            />
-          </div>
-
-          <div>
-            <h1>
-              Password Strength
-              Checker
-            </h1>
-
-            <p>
-              Analyze password
-              strength locally in
-              your browser.
-            </p>
-          </div>
+    <main className="analytics-page">
+      <header className="analytics-header">
+        <div className="analytics-heading-icon">
+          <BarChart3 size={34} />
         </div>
+        <p>SECURITY ANALYTICS</p>
+        <h1>Your Threat Overview</h1>
+        <span>Insights from every scan you have saved in CyberShield AI.</span>
+      </header>
 
-        <section className="scanner-card">
-          <div className="password-input-box">
-            <KeyRound
-              size={20}
-            />
+      {error && <div className="dashboard-stats-error">{error}</div>}
 
-            <input
-              type={
-                showPassword
-                  ? "text"
-                  : "password"
-              }
-              placeholder="Enter a password"
-              value={password}
-              onChange={(event) =>
-                setPassword(
-                  event.target.value
-                )
-              }
-            />
+      <section className="analytics-summary-grid">
+        <div>
+          <span>Total Scans</span>
+          <strong>{loading ? "..." : total}</strong>
+        </div>
+        <div>
+          <span>Threats Detected</span>
+          <strong>{loading ? "..." : threats}</strong>
+        </div>
+        <div>
+          <span>Average Risk Score</span>
+          <strong>{loading ? "..." : `${averageRisk}/100`}</strong>
+        </div>
+      </section>
 
-            <button
-              type="button"
-              onClick={() =>
-                setShowPassword(
-                  !showPassword
-                )
-              }
-            >
-              {showPassword ? (
-                <EyeOff
-                  size={19}
-                />
-              ) : (
-                <Eye
-                  size={19}
-                />
-              )}
-            </button>
+      <section className="analytics-grid">
+        <article className="chart-card">
+          <h2>Risk Distribution</h2>
+          <p>How your scanned items were classified.</p>
+          <div className="chart-area">
+            {riskData.length === 0 ? (
+              <p className="analytics-empty">No scans yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={riskData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={60}
+                    outerRadius={105}
+                    paddingAngle={3}
+                  >
+                    {riskData.map((item) => (
+                      <Cell key={item.name} fill={item.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
+        </article>
 
-          <div className="password-score-card">
-            <span>
-              Strength
-            </span>
-
-            <strong>
-              {
-                analysis.label
-              }
-            </strong>
-
-            <div className="password-progress">
-              <div
-                style={{
-                  width: `${analysis.score}%`,
-                }}
-              />
-            </div>
-
-            <p>
-              Score:
-              {" "}
-              {analysis.score}
-              /100
-            </p>
+        <article className="chart-card">
+          <h2>Scans by Type</h2>
+          <p>Which CyberShield tools you use most.</p>
+          <div className="chart-area">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={typeData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                <XAxis dataKey="type" stroke="#8492a5" />
+                <YAxis allowDecimals={false} stroke="#8492a5" />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                <Bar dataKey="scans" fill="#25f4ae" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
+        </article>
+      </section>
 
-          <ul className="password-requirements">
-            <Requirement
-              passed={
-                analysis.tests
-                  .length
-              }
-              text="At least 12 characters"
-            />
-
-            <Requirement
-              passed={
-                analysis.tests
-                  .uppercase
-              }
-              text="Uppercase letter"
-            />
-
-            <Requirement
-              passed={
-                analysis.tests
-                  .lowercase
-              }
-              text="Lowercase letter"
-            />
-
-            <Requirement
-              passed={
-                analysis.tests
-                  .number
-              }
-              text="At least one number"
-            />
-
-            <Requirement
-              passed={
-                analysis.tests
-                  .special
-              }
-              text="Special character"
-            />
-          </ul>
-
-          <div className="security-note">
-            <ShieldCheck
-              size={19}
-            />
-
-            Your password is
-            analyzed locally and
-            is not uploaded or
-            stored.
-          </div>
-        </section>
+      <div className="analytics-note">
+        <Info size={18} />
+        Analytics update live as you run new scans while logged in.
       </div>
     </main>
   );

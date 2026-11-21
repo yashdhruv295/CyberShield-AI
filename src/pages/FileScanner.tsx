@@ -14,6 +14,8 @@ import {
 
 import {
   scanFile,
+  MAX_HASH_FILE_BYTES,
+  MAX_UPLOAD_MB,
 } from "../services/fileScanner";
 
 import type {
@@ -48,6 +50,9 @@ export default function FileScanner() {
   const [saved, setSaved] =
     useState(false);
 
+  const [progress, setProgress] =
+    useState("");
+
   const handleFileChange = (
     event:
       ChangeEvent<HTMLInputElement>
@@ -61,10 +66,10 @@ export default function FileScanner() {
 
     if (
       selected.size >
-      32 * 1024 * 1024
+      MAX_HASH_FILE_BYTES
     ) {
       setError(
-        "Maximum file size is 32 MB."
+        "Maximum file size is 200 MB."
       );
       return;
     }
@@ -90,7 +95,8 @@ export default function FileScanner() {
 
       const data =
         await scanFile(
-          file
+          file,
+          setProgress
         );
 
       if (
@@ -117,6 +123,7 @@ export default function FileScanner() {
 
       setResult(data);
 
+      try {
       await saveScan({
         type: "FILE",
 
@@ -170,6 +177,13 @@ export default function FileScanner() {
       });
 
       setSaved(true);
+      } catch (saveError) {
+        // Saving history needs login; the scan result is still shown.
+        console.error(
+          "History Save Error:",
+          saveError
+        );
+      }
     } catch (err) {
       setError(
         err instanceof Error
@@ -178,6 +192,7 @@ export default function FileScanner() {
       );
     } finally {
       setLoading(false);
+      setProgress("");
     }
   };
 
@@ -213,8 +228,7 @@ export default function FileScanner() {
             </strong>
 
             <span>
-              Maximum size:
-              32 MB
+              Upload up to {MAX_UPLOAD_MB} MB (larger files are checked by fingerprint)
             </span>
 
             <input
@@ -257,6 +271,12 @@ export default function FileScanner() {
             upload confidential
             or private files.
           </div>
+
+          {loading && progress && (
+            <p className="scan-saved-message">
+              {progress}
+            </p>
+          )}
 
           {error && (
             <div className="scanner-error">

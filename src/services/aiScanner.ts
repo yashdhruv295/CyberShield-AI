@@ -1,3 +1,5 @@
+import { postJson } from "./api";
+
 export type RiskLevel =
   | "SAFE"
   | "LOW RISK"
@@ -27,44 +29,12 @@ export interface AIAnalysisResult {
   message?: string;
 }
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:5000";
 
 async function analyzeContent(
   endpoint: string,
   content: string
 ): Promise<AIAnalysisResult> {
-
-  const response =
-    await fetch(
-      `${API_URL}${endpoint}`,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-
-        body:
-          JSON.stringify({
-            content,
-          }),
-      }
-    );
-
-  const data =
-    await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.message ||
-        "AI analysis failed."
-    );
-  }
-
-  return data;
+  return postJson<AIAnalysisResult>(endpoint, { content }, 120000);
 }
 
 export function analyzeEmail(
