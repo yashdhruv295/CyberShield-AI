@@ -1,3 +1,4 @@
+
 import {
   AlertTriangle,
   Download,
@@ -5,63 +6,67 @@ import {
   LoaderCircle,
   Search,
   ShieldAlert,
-  ShieldCheck,
+  ShieldCheck
 } from "lucide-react";
 
 import {
   FormEvent,
-  useState,
+  useState
 } from "react";
 
 import {
   scanUrl,
-} from "../services/urlScanner";
-
-import type {
-  UrlScanResult,
+  type UrlScanResult
 } from "../services/urlScanner";
 
 import {
-  saveScan,
+  saveScan
 } from "../services/scanHistory";
 
 import {
-  downloadSecurityReport,
+  downloadSecurityReport
 } from "../services/pdfReport";
 
+import {
+  useSessionState
+} from "../hooks/useSessionState";
+
+import {
+  useTaskTracker
+} from "../hooks/useTaskTracker";
+
+import TaskProgress from "../components/TaskProgress";
+
 export default function UrlScanner() {
-  const [url, setUrl] =
-    useState("");
+  const [url, setUrl] = useSessionState(
+    "url-scanner:url",
+    ""
+  );
 
-  const [loading, setLoading] =
-    useState(false);
+  const [error, setError] = useSessionState(
+    "url-scanner:error",
+    ""
+  );
 
-  const [error, setError] =
-    useState("");
-
-  const [saved, setSaved] =
-    useState(false);
+  const [saved, setSaved] = useSessionState(
+    "url-scanner:saved",
+    false
+  );
 
   const [result, setResult] =
-    useState<UrlScanResult | null>(
+    useSessionState<UrlScanResult | null>(
+      "url-scanner:result",
       null
     );
 
-  const normalizeUrl = (
-    value: string
-  ) => {
-    const clean =
-      value.trim();
+  const [loading, setLoading] = useState(false);
 
-    if (
-      /^https?:\/\//i.test(
-        clean
-      )
-    ) {
-      return clean;
-    }
+  const tracker = useTaskTracker("url-scanner");
 
-    return `https://${clean}`;
+  const normalizeUrl = (value: string) => {
+    return /^https?:\/\//i.test(value.trim())
+      ? value.trim()
+      : `https://${value.trim()}`;
   };
 
   const handleSubmit = async (
@@ -71,20 +76,15 @@ export default function UrlScanner() {
 
     setError("");
     setSaved(false);
-    setResult(null);
 
-    const normalized =
-      normalizeUrl(url);
+    const normalized = normalizeUrl(url);
 
     try {
-      const parsed =
-        new URL(normalized);
+      const parsed = new URL(normalized);
 
       if (
-        parsed.protocol !==
-          "http:" &&
-        parsed.protocol !==
-          "https:"
+        parsed.protocol !== "http:" &&
+        parsed.protocol !== "https:"
       ) {
         throw new Error();
       }
@@ -95,20 +95,26 @@ export default function UrlScanner() {
       return;
     }
 
+    setLoading(true);
+
+    tracker.start(
+      "Validating URL and submitting scan..."
+    );
+
     try {
-      setLoading(true);
+      const data = await scanUrl(
+        normalized,
+        message => tracker.update(message)
+      );
 
-      const data =
-        await scanUrl(
-          normalized
-        );
-
-      if (
-        data.pending
-      ) {
-        setError(
+      if (data.pending) {
+        const message =
           data.message ||
-            "Analysis is still pending. Please try again."
+          "Analysis is still pending. Please try again.";
+
+        setError(message);
+        tracker.fail(
+          "VirusTotal did not return a completed result"
         );
 
         return;
@@ -116,109 +122,68 @@ export default function UrlScanner() {
 
       setResult(data);
 
+      tracker.finish(
+        "VirusTotal analysis completed"
+      );
+
       try {
         await saveScan({
           type: "URL",
-
-          input:
-            normalized,
-
-          riskLevel:
-            data.riskLevel,
-
-          riskScore:
-            data.riskScore,
+          input: normalized,
+          riskLevel: data.riskLevel,
+          riskScore: data.riskScore,
 
           summary:
             `VirusTotal URL security analysis for ${normalized}.`,
 
           recommendation:
-            data.riskLevel ===
-            "HIGH RISK"
+            data.riskLevel === "HIGH RISK"
               ? "Do not open or share this URL."
-              : data.riskLevel ===
-                "SUSPICIOUS"
+              : data.riskLevel === "SUSPICIOUS"
               ? "Use caution before visiting this URL."
               : "No major threat was detected, but always browse carefully.",
 
-          harmless:
-            data.stats.harmless,
-
-          malicious:
-            data.stats.malicious,
-
-          suspicious:
-            data.stats.suspicious,
-
-          undetected:
-            data.stats.undetected,
-
-          timeout:
-            data.stats.timeout,
-
-          analysisId:
-            data.analysisId,
+          harmless: data.stats.harmless,
+          malicious: data.stats.malicious,
+          suspicious: data.stats.suspicious,
+          undetected: data.stats.undetected,
+          timeout: data.stats.timeout,
+          analysisId: data.analysisId
         });
 
         setSaved(true);
-      } catch (
-        saveError
-      ) {
+      } catch (saveError) {
         console.error(
+          "History Save Error:",
           saveError
         );
       }
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Unable to scan URL."
-      );
+          : "Unable to scan URL.";
+
+      setError(message);
+      tracker.fail(message);
     } finally {
       setLoading(false);
     }
   };
 
-  const getRiskIcon = () => {
-    if (!result) {
-      return null;
-    }
-
-    if (
-      result.riskLevel ===
-      "HIGH RISK"
-    ) {
-      return (
-        <ShieldAlert
-          size={32}
-        />
-      );
-    }
-
-    return (
-      <ShieldCheck
-        size={32}
-      />
-    );
-  };
-
   return (
     <main className="scanner-page">
       <div className="scanner-container">
+
         <div className="scanner-header">
           <div className="scanner-icon">
             <Link2 size={30} />
           </div>
 
           <div>
-            <h1>
-              URL Security Scanner
-            </h1>
-
+            <h1>URL Security Scanner</h1>
             <p>
-              Analyze suspicious
-              links using
-              VirusTotal.
+              Analyze suspicious links using VirusTotal.
             </p>
           </div>
         </div>
@@ -234,20 +199,13 @@ export default function UrlScanner() {
               type="text"
               placeholder="example.com"
               value={url}
-              onChange={(event) =>
-                setUrl(
-                  event.target.value
-                )
-              }
+              onChange={e => setUrl(e.target.value)}
             />
           </div>
 
           {error && (
             <div className="scanner-error">
-              <AlertTriangle
-                size={19}
-              />
-
+              <AlertTriangle size={19} />
               {error}
             </div>
           )}
@@ -263,7 +221,6 @@ export default function UrlScanner() {
                   size={19}
                   className="spin"
                 />
-
                 Analysing...
               </>
             ) : (
@@ -275,157 +232,92 @@ export default function UrlScanner() {
           </button>
         </form>
 
+        <TaskProgress
+          title="URL scan task"
+          task={tracker.task}
+        />
+
         {result && (
           <section className="scanner-result">
+
             <div className="result-heading">
               <div className="result-icon">
-                {getRiskIcon()}
+                {result.riskLevel === "HIGH RISK" ? (
+                  <ShieldAlert size={32} />
+                ) : (
+                  <ShieldCheck size={32} />
+                )}
               </div>
 
               <div>
-                <h2>
-                  {
-                    result.riskLevel
-                  }
-                </h2>
-
-                <p>
-                  VirusTotal
-                  security result
-                </p>
+                <h2>{result.riskLevel}</h2>
+                <p>VirusTotal security result</p>
               </div>
             </div>
 
             <div className="risk-score-box">
-              <span>
-                Risk Score
-              </span>
-
+              <span>Risk Score</span>
               <strong>
-                {
-                  result.riskScore
-                }
-                /100
+                {result.riskScore}/100
               </strong>
             </div>
 
             <div className="scan-stats-grid">
               <article>
-                <span>
-                  Malicious
-                </span>
-
-                <strong>
-                  {
-                    result.stats
-                      .malicious
-                  }
-                </strong>
+                <span>Malicious</span>
+                <strong>{result.stats.malicious}</strong>
               </article>
 
               <article>
-                <span>
-                  Suspicious
-                </span>
-
-                <strong>
-                  {
-                    result.stats
-                      .suspicious
-                  }
-                </strong>
+                <span>Suspicious</span>
+                <strong>{result.stats.suspicious}</strong>
               </article>
 
               <article>
-                <span>
-                  Harmless
-                </span>
-
-                <strong>
-                  {
-                    result.stats
-                      .harmless
-                  }
-                </strong>
+                <span>Harmless</span>
+                <strong>{result.stats.harmless}</strong>
               </article>
 
               <article>
-                <span>
-                  Undetected
-                </span>
-
-                <strong>
-                  {
-                    result.stats
-                      .undetected
-                  }
-                </strong>
+                <span>Undetected</span>
+                <strong>{result.stats.undetected}</strong>
               </article>
             </div>
 
             <div className="scanned-url-box">
-              <span>
-                Scanned URL
-              </span>
-
-              <p>
-                {result.url}
-              </p>
+              <span>Scanned URL</span>
+              <p>{result.url}</p>
             </div>
 
             <button
               className="report-btn"
               onClick={() =>
-                downloadSecurityReport(
-                  {
-                    title:
-                      "URL Security Report",
-
-                    type: "URL",
-
-                    input:
-                      result.url,
-
-                    riskScore:
-                      result.riskScore,
-
-                    riskLevel:
-                      result.riskLevel,
-
-                    malicious:
-                      result.stats
-                        .malicious,
-
-                    suspicious:
-                      result.stats
-                        .suspicious,
-
-                    harmless:
-                      result.stats
-                        .harmless,
-
-                    undetected:
-                      result.stats
-                        .undetected,
-                  }
-                )
+                downloadSecurityReport({
+                  title: "URL Security Report",
+                  type: "URL",
+                  input: result.url,
+                  riskScore: result.riskScore,
+                  riskLevel: result.riskLevel,
+                  malicious: result.stats.malicious,
+                  suspicious: result.stats.suspicious,
+                  harmless: result.stats.harmless,
+                  undetected: result.stats.undetected
+                })
               }
             >
-              <Download
-                size={18}
-              />
-
+              <Download size={18} />
               Download PDF Report
             </button>
 
             {saved && (
               <p className="scan-saved-message">
-                Scan saved to
-                history successfully.
+                Scan saved to history successfully.
               </p>
             )}
+
           </section>
         )}
+
       </div>
     </main>
   );

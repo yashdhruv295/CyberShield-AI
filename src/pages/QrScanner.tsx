@@ -1,71 +1,99 @@
+
 import {
   ChangeEvent,
   useRef,
-  useState,
+  useState
 } from "react";
 
 import {
   AlertTriangle,
   CheckCircle2,
-  FileImage,
+  FileDown,
   LoaderCircle,
   QrCode,
   ShieldCheck,
-  Upload,
+  Upload
 } from "lucide-react";
 
 import jsQR from "jsqr";
 
 import {
   scanUrl,
-  type UrlScanResult,
+  type UrlScanResult
 } from "../services/urlScanner";
 
 import {
-  saveScan,
+  saveScan
 } from "../services/scanHistory";
 
 import {
-  downloadSecurityReport,
+  downloadSecurityReport
 } from "../services/pdfReport";
 
-export default function QrScanner() {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+import {
+  useSessionState
+} from "../hooks/useSessionState";
 
-  const [imagePreview, setImagePreview] = useState("");
-  const [decodedText, setDecodedText] = useState("");
+import {
+  useTaskTracker
+} from "../hooks/useTaskTracker";
+
+import TaskProgress from "../components/TaskProgress";
+
+export default function QrScanner() {
+  const fileInputRef =
+    useRef<HTMLInputElement | null>(null);
+
+  const [imagePreview, setImagePreview] =
+    useState("");
+
+  const [decodedText, setDecodedText] =
+    useSessionState("qr-scanner:decoded", "");
+
+  const [error, setError] =
+    useSessionState("qr-scanner:error", "");
+
+  const [result, setResult] =
+    useSessionState<UrlScanResult | null>(
+      "qr-scanner:result",
+      null
+    );
+
+  const [saved, setSaved] =
+    useSessionState("qr-scanner:saved", false);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  const [result, setResult] = useState<UrlScanResult | null>(null);
-  const [saved, setSaved] = useState(false);
+  const tracker = useTaskTracker("qr-scanner");
 
-  const decodeQrCode = async (file: File) => {
-    return new Promise<string>((resolve, reject) => {
+  const decodeQrCode = (file: File) =>
+    new Promise<string>((resolve, reject) => {
       const image = new Image();
 
-      const objectUrl = URL.createObjectURL(file);
+      const objectUrl =
+        URL.createObjectURL(file);
 
       image.onload = () => {
         try {
-          const canvas = document.createElement("canvas");
+          const canvas =
+            document.createElement("canvas");
 
-          const context = canvas.getContext("2d", {
-            willReadFrequently: true,
-          });
+          const context = canvas.getContext(
+            "2d",
+            { willReadFrequently: true }
+          );
 
           if (!context) {
-            reject(
-              new Error("Unable to create image scanner.")
+            throw new Error(
+              "Unable to create image scanner."
             );
-
-            URL.revokeObjectURL(objectUrl);
-            return;
           }
 
-          canvas.width = image.naturalWidth || image.width;
-          canvas.height = image.naturalHeight || image.height;
+          canvas.width =
+            image.naturalWidth || image.width;
+
+          canvas.height =
+            image.naturalHeight || image.height;
 
           context.drawImage(
             image,
@@ -75,38 +103,33 @@ export default function QrScanner() {
             canvas.height
           );
 
-          const imageData = context.getImageData(
+          const pixels = context.getImageData(
             0,
             0,
             canvas.width,
             canvas.height
           );
 
-          const qrResult = jsQR(
-            imageData.data,
-            imageData.width,
-            imageData.height,
+          const decoded = jsQR(
+            pixels.data,
+            pixels.width,
+            pixels.height,
             {
-              inversionAttempts: "attemptBoth",
+              inversionAttempts: "attemptBoth"
             }
           );
 
           URL.revokeObjectURL(objectUrl);
 
-          if (!qrResult?.data) {
-            reject(
-              new Error(
-                "No QR code was detected in this image."
-              )
+          if (!decoded?.data) {
+            throw new Error(
+              "No QR code was detected in this image."
             );
-
-            return;
           }
 
-          resolve(qrResult.data.trim());
+          resolve(decoded.data.trim());
         } catch (err) {
           URL.revokeObjectURL(objectUrl);
-
           reject(err);
         }
       };
@@ -115,21 +138,19 @@ export default function QrScanner() {
         URL.revokeObjectURL(objectUrl);
 
         reject(
-          new Error("Unable to read the selected image.")
+          new Error(
+            "Unable to read the selected image."
+          )
         );
       };
 
       image.src = objectUrl;
     });
-  };
 
   const normalizeUrl = (value: string) => {
     const clean = value.trim();
 
-    if (
-      clean.startsWith("http://") ||
-      clean.startsWith("https://")
-    ) {
+    if (/^https?:\/\//i.test(clean)) {
       return clean;
     }
 
@@ -160,28 +181,29 @@ export default function QrScanner() {
   ) => {
     const file = event.target.files?.[0];
 
-    if (!file) {
-      return;
-    }
+    if (!file) return;
 
     setError("");
-    setResult(null);
-    setDecodedText("");
     setSaved(false);
 
     if (!file.type.startsWith("image/")) {
-      setError("Please select a valid image file.");
+      setError(
+        "Please select a valid image file."
+      );
       return;
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      setError("Maximum QR image size is 10 MB.");
+      setError(
+        "Maximum QR image size is 10 MB."
+      );
       return;
     }
 
-    const preview = URL.createObjectURL(file);
+    const preview =
+      URL.createObjectURL(file);
 
-    setImagePreview((previous) => {
+    setImagePreview(previous => {
       if (previous) {
         URL.revokeObjectURL(previous);
       }
@@ -191,16 +213,24 @@ export default function QrScanner() {
 
     setLoading(true);
 
-    try {
-      const qrData = await decodeQrCode(file);
+    tracker.start("Reading QR image...");
 
-      setDecodedText(qrData);
+    try {
+      const text = await decodeQrCode(file);
+
+      setDecodedText(text);
+
+      tracker.finish(
+        "QR image decoded successfully"
+      );
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Unable to decode QR code."
-      );
+          : "Unable to decode QR code.";
+
+      setError(message);
+      tracker.fail(message);
     } finally {
       setLoading(false);
     }
@@ -208,7 +238,9 @@ export default function QrScanner() {
 
   const handleScanUrl = async () => {
     if (!decodedText) {
-      setError("Please upload and decode a QR code first.");
+      setError(
+        "Please upload and decode a QR code first."
+      );
       return;
     }
 
@@ -216,61 +248,97 @@ export default function QrScanner() {
 
     if (!isWebUrl(url)) {
       setError(
-        "This QR code does not contain a valid website URL. CyberShield can display the decoded text, but VirusTotal URL scanning requires an http:// or https:// URL."
+        "This QR code does not contain a valid website URL. The decoded text is shown, but VirusTotal URL scanning requires an http:// or https:// URL."
       );
-
       return;
     }
 
     setLoading(true);
     setError("");
-    setResult(null);
     setSaved(false);
 
+    tracker.start(
+      "Submitting QR URL to VirusTotal..."
+    );
+
     try {
-      const scanResult = await scanUrl(url);
+      const scanResult = await scanUrl(
+        url,
+        message => tracker.update(message)
+      );
+
+      if (scanResult.pending) {
+        setResult(scanResult);
+
+        const message =
+          scanResult.message ||
+          "Analysis is still pending.";
+
+        setError(message);
+
+        tracker.fail(
+          "VirusTotal analysis is still pending"
+        );
+
+        return;
+      }
 
       setResult(scanResult);
 
-      if (!scanResult.pending) {
-        try {
-          await saveScan({
-            type: "QR",
-            input: url,
-            riskLevel: scanResult.riskLevel,
-            riskScore: scanResult.riskScore,
-            summary: "QR code URL analyzed using VirusTotal.",
-            harmless: scanResult.stats?.harmless ?? 0,
-            malicious: scanResult.stats?.malicious ?? 0,
-            suspicious: scanResult.stats?.suspicious ?? 0,
-            undetected: scanResult.stats?.undetected ?? 0,
-            timeout: scanResult.stats?.timeout ?? 0,
-            analysisId: scanResult.analysisId,
-          });
+      tracker.finish(
+        "QR URL security analysis completed"
+      );
 
-          setSaved(true);
-        } catch (saveError) {
-          console.error(
-            "Unable to save QR scan:",
-            saveError
-          );
-        }
+      try {
+        await saveScan({
+          type: "QR",
+          input: url,
+          riskLevel: scanResult.riskLevel,
+          riskScore: scanResult.riskScore,
+
+          summary:
+            "QR code URL analyzed using VirusTotal.",
+
+          harmless:
+            scanResult.stats?.harmless ?? 0,
+
+          malicious:
+            scanResult.stats?.malicious ?? 0,
+
+          suspicious:
+            scanResult.stats?.suspicious ?? 0,
+
+          undetected:
+            scanResult.stats?.undetected ?? 0,
+
+          timeout:
+            scanResult.stats?.timeout ?? 0,
+
+          analysisId: scanResult.analysisId
+        });
+
+        setSaved(true);
+      } catch (saveError) {
+        console.error(
+          "Unable to save QR scan:",
+          saveError
+        );
       }
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Unable to scan QR URL."
-      );
+          : "Unable to scan QR URL.";
+
+      setError(message);
+      tracker.fail(message);
     } finally {
       setLoading(false);
     }
   };
 
   const downloadReport = () => {
-    if (!result) {
-      return;
-    }
+    if (!result) return;
 
     downloadSecurityReport({
       title: "QR Code Security Report",
@@ -278,30 +346,36 @@ export default function QrScanner() {
       input: result.url || decodedText,
       riskScore: result.riskScore,
       riskLevel: result.riskLevel,
-      summary:
-        result.pending
-          ? "VirusTotal analysis is still processing."
-          : "QR code URL analyzed using VirusTotal security engines.",
-      malicious: result.stats?.malicious ?? 0,
-      suspicious: result.stats?.suspicious ?? 0,
-      harmless: result.stats?.harmless ?? 0,
-      undetected: result.stats?.undetected ?? 0,
+
+      summary: result.pending
+        ? "VirusTotal analysis is still processing."
+        : "QR code URL analyzed using VirusTotal security engines.",
+
+      malicious:
+        result.stats?.malicious ?? 0,
+
+      suspicious:
+        result.stats?.suspicious ?? 0,
+
+      harmless:
+        result.stats?.harmless ?? 0,
+
+      undetected:
+        result.stats?.undetected ?? 0,
+
       recommendation:
         result.riskLevel === "HIGH RISK"
           ? "Do not open this QR URL. It may be malicious."
           : result.riskLevel === "SUSPICIOUS"
           ? "Use caution. Verify the source before opening this QR URL."
-          : "The URL currently shows low risk, but always verify QR codes from unknown sources.",
+          : "The URL currently shows low risk, but always verify QR codes from unknown sources."
     });
-  };
-
-  const chooseFile = () => {
-    fileInputRef.current?.click();
   };
 
   return (
     <main className="scanner-page">
       <div className="scanner-container">
+
         <div className="scanner-header">
           <div className="scanner-icon">
             <QrCode size={30} />
@@ -311,13 +385,14 @@ export default function QrScanner() {
             <h1>QR Code Scam Scanner</h1>
 
             <p>
-              Upload a QR image, decode its content and scan website URLs for
-              security threats.
+              Upload a QR image, decode its content
+              and scan website URLs for security threats.
             </p>
           </div>
         </div>
 
         <section className="scanner-card">
+
           <input
             ref={fileInputRef}
             type="file"
@@ -328,21 +403,25 @@ export default function QrScanner() {
 
           <div
             className="qr-upload-box"
-            onClick={chooseFile}
+            onClick={() =>
+              fileInputRef.current?.click()
+            }
             role="button"
             tabIndex={0}
-            onKeyDown={(event) => {
+            onKeyDown={event => {
               if (
                 event.key === "Enter" ||
                 event.key === " "
               ) {
-                chooseFile();
+                fileInputRef.current?.click();
               }
             }}
           >
             <Upload size={36} />
 
-            <strong>Upload QR Code Image</strong>
+            <strong>
+              Upload QR Code Image
+            </strong>
 
             <span>
               PNG, JPG, JPEG or WEBP • Maximum 10 MB
@@ -357,59 +436,51 @@ export default function QrScanner() {
             />
           )}
 
-          {loading && !result && (
-            <div className="dashboard-live-loading">
+          {loading && (
+            <p className="scan-saved-message">
               <LoaderCircle
+                size={17}
                 className="spin"
-                size={20}
               />
-
-              <span>Processing QR code...</span>
-            </div>
-          )}
-
-          {error && (
-            <div className="scanner-error">
-              <AlertTriangle size={18} />
-              <span>{error}</span>
-            </div>
+              Processing...
+            </p>
           )}
 
           {decodedText && (
             <div className="scanned-url-box">
               <span>Decoded QR Content</span>
-
               <p>{decodedText}</p>
+            </div>
+          )}
+
+          {error && (
+            <div className="scanner-error">
+              <AlertTriangle size={19} />
+              {error}
             </div>
           )}
 
           {decodedText && (
             <button
-              type="button"
               className="btn-primary full-btn"
               onClick={handleScanUrl}
               disabled={loading}
             >
-              {loading ? (
-                <>
-                  <LoaderCircle
-                    className="spin"
-                    size={19}
-                  />
-                  Scanning...
-                </>
-              ) : (
-                <>
-                  <ShieldCheck size={19} />
-                  Scan QR URL
-                </>
-              )}
+              <ShieldCheck size={19} />
+              Scan QR URL
             </button>
           )}
+
         </section>
+
+        <TaskProgress
+          title="QR scan task"
+          task={tracker.task}
+        />
 
         {result && (
           <section className="scanner-result">
+
             <div className="result-heading">
               {result.riskLevel === "HIGH RISK" ||
               result.riskLevel === "SUSPICIOUS" ? (
@@ -420,10 +491,7 @@ export default function QrScanner() {
 
               <div>
                 <h2>{result.riskLevel}</h2>
-
-                <p>
-                  QR Code Security Analysis
-                </p>
+                <p>QR Code Security Analysis</p>
               </div>
             </div>
 
@@ -438,7 +506,6 @@ export default function QrScanner() {
             <div className="scan-stats-grid">
               <article>
                 <span>Malicious</span>
-
                 <strong>
                   {result.stats?.malicious ?? 0}
                 </strong>
@@ -446,7 +513,6 @@ export default function QrScanner() {
 
               <article>
                 <span>Suspicious</span>
-
                 <strong>
                   {result.stats?.suspicious ?? 0}
                 </strong>
@@ -454,7 +520,6 @@ export default function QrScanner() {
 
               <article>
                 <span>Harmless</span>
-
                 <strong>
                   {result.stats?.harmless ?? 0}
                 </strong>
@@ -462,47 +527,29 @@ export default function QrScanner() {
 
               <article>
                 <span>Undetected</span>
-
                 <strong>
                   {result.stats?.undetected ?? 0}
                 </strong>
               </article>
             </div>
 
-            <div className="scanned-url-box">
-              <span>Scanned URL</span>
-
-              <p>{result.url}</p>
-            </div>
-
-            <div className="recommendation-box">
-              <h3>Security Recommendation</h3>
-
-              <p>
-                {result.riskLevel === "HIGH RISK"
-                  ? "Do not open this QR URL. VirusTotal detected malicious activity."
-                  : result.riskLevel === "SUSPICIOUS"
-                  ? "Be careful before opening this QR URL. Verify the QR source first."
-                  : "No major threat was detected, but QR codes from unknown sources should still be treated carefully."}
-              </p>
-            </div>
-
-            {saved && (
-              <p className="scan-saved-message">
-                Scan saved to CyberShield AI history.
-              </p>
-            )}
-
             <button
-              type="button"
               className="report-btn"
               onClick={downloadReport}
             >
-              <FileImage size={18} />
-              Download Security Report
+              <FileDown size={18} />
+              Download PDF Report
             </button>
+
+            {saved && (
+              <p className="scan-saved-message">
+                Scan saved to history successfully.
+              </p>
+            )}
+
           </section>
         )}
+
       </div>
     </main>
   );

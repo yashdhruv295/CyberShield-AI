@@ -1,31 +1,43 @@
+
 import {
   AlertTriangle,
   LoaderCircle,
-  ShieldCheck,
+  ShieldCheck
 } from "lucide-react";
 
 import {
   FormEvent,
-  useState,
+  useState
 } from "react";
 
 import type {
-  AIAnalysisResult,
+  AIAnalysisResult
 } from "../services/aiScanner";
 
 import {
-  saveScan,
+  saveScan
 } from "../services/scanHistory";
 
 import {
-  downloadSecurityReport,
+  downloadSecurityReport
 } from "../services/pdfReport";
+
+import {
+  useSessionState
+} from "../hooks/useSessionState";
+
+import {
+  useTaskTracker
+} from "../hooks/useTaskTracker";
+
+import TaskProgress from "./TaskProgress";
 
 type Props = {
   title: string;
   subtitle: string;
   placeholder: string;
   type: "EMAIL" | "MESSAGE";
+
   analyze: (
     content: string
   ) => Promise<AIAnalysisResult>;
@@ -36,24 +48,36 @@ export default function AITextScanner({
   subtitle,
   placeholder,
   type,
-  analyze,
+  analyze
 }: Props) {
-  const [content, setContent] =
-    useState("");
+  const pageKey = type.toLowerCase();
 
-  const [loading, setLoading] =
-    useState(false);
+  const [content, setContent] = useSessionState(
+    `${pageKey}-scanner:content`,
+    ""
+  );
 
-  const [error, setError] =
-    useState("");
+  const [error, setError] = useSessionState(
+    `${pageKey}-scanner:error`,
+    ""
+  );
 
-  const [saved, setSaved] =
-    useState(false);
+  const [saved, setSaved] = useSessionState(
+    `${pageKey}-scanner:saved`,
+    false
+  );
 
   const [result, setResult] =
-    useState<AIAnalysisResult | null>(
+    useSessionState<AIAnalysisResult | null>(
+      `${pageKey}-scanner:result`,
       null
     );
+
+  const [loading, setLoading] = useState(false);
+
+  const tracker = useTaskTracker(
+    `${pageKey}-scanner`
+  );
 
   const handleSubmit = async (
     event: FormEvent
@@ -62,98 +86,78 @@ export default function AITextScanner({
 
     setError("");
     setSaved(false);
-    setResult(null);
 
-    const cleanContent =
-      content.trim();
+    const cleanContent = content.trim();
 
-    if (
-      cleanContent.length < 5
-    ) {
+    if (cleanContent.length < 5) {
       setError(
         "Please enter enough content for analysis."
       );
       return;
     }
 
-    try {
-      setLoading(true);
+    setLoading(true);
 
-      const data =
-        await analyze(
-          cleanContent
-        );
+    tracker.start(
+      "Sending content for AI analysis..."
+    );
+
+    try {
+      const data = await analyze(cleanContent);
 
       setResult(data);
+
+      tracker.finish(
+        "AI analysis completed"
+      );
 
       try {
         await saveScan({
           type,
-          input:
-            cleanContent.slice(
-              0,
-              500
-            ),
-          riskLevel:
-            data.riskLevel,
-          riskScore:
-            data.riskScore,
-          summary:
-            data.summary,
-          reasons:
-            data.reasons,
-          suspiciousElements:
-            data.suspiciousElements,
-          recommendation:
-            data.recommendation,
+          input: cleanContent.slice(0, 500),
+          riskLevel: data.riskLevel,
+          riskScore: data.riskScore,
+          summary: data.summary,
+          reasons: data.reasons,
+          suspiciousElements: data.suspiciousElements,
+          recommendation: data.recommendation
         });
 
         setSaved(true);
-      } catch (
-        saveError
-      ) {
+      } catch (saveError) {
         console.error(
           "History Save Error:",
           saveError
         );
       }
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Analysis failed."
-      );
+          : "Analysis failed.";
+
+      setError(message);
+      tracker.fail(message);
     } finally {
       setLoading(false);
     }
   };
 
-  const getRiskClass = () => {
-    if (!result) {
-      return "";
-    }
-
-    switch (
-      result.riskLevel
-    ) {
-      case "SAFE":
-      case "LOW RISK":
-        return "risk-safe";
-
-      case "SUSPICIOUS":
-        return "risk-suspicious";
-
-      case "HIGH RISK":
-        return "risk-danger";
-
-      default:
-        return "";
-    }
-  };
+  const riskClass = !result
+    ? ""
+    : result.riskLevel === "SAFE" ||
+      result.riskLevel === "LOW RISK"
+    ? "risk-safe"
+    : result.riskLevel === "SUSPICIOUS"
+    ? "risk-suspicious"
+    : result.riskLevel === "HIGH RISK"
+    ? "risk-danger"
+    : "";
 
   return (
     <main className="scanner-page">
       <div className="scanner-container">
+
         <div className="scanner-header">
           <div className="scanner-icon">
             <ShieldCheck size={30} />
@@ -173,18 +177,14 @@ export default function AITextScanner({
             className="scanner-textarea"
             placeholder={placeholder}
             value={content}
-            onChange={(event) =>
-              setContent(
-                event.target.value
-              )
+            onChange={event =>
+              setContent(event.target.value)
             }
           />
 
           {error && (
             <div className="scanner-error">
-              <AlertTriangle
-                size={19}
-              />
+              <AlertTriangle size={19} />
               {error}
             </div>
           )}
@@ -204,68 +204,48 @@ export default function AITextScanner({
               </>
             ) : (
               <>
-                <ShieldCheck
-                  size={19}
-                />
+                <ShieldCheck size={19} />
                 Analyze
               </>
             )}
           </button>
         </form>
 
+        <TaskProgress
+          title={`${
+            type === "EMAIL" ? "Email" : "Message"
+          } analysis task`}
+          task={tracker.task}
+        />
+
         {result && (
           <section
-            className={`scanner-result ${getRiskClass()}`}
+            className={`scanner-result ${riskClass}`}
           >
             <div className="result-heading">
-              <ShieldCheck
-                size={28}
-              />
+              <ShieldCheck size={28} />
 
               <div>
-                <h2>
-                  {
-                    result.riskLevel
-                  }
-                </h2>
-
-                <p>
-                  {
-                    result.summary
-                  }
-                </p>
+                <h2>{result.riskLevel}</h2>
+                <p>{result.summary}</p>
               </div>
             </div>
 
             <div className="risk-score-box">
-              <span>
-                Risk Score
-              </span>
-
+              <span>Risk Score</span>
               <strong>
-                {
-                  result.riskScore
-                }
-                /100
+                {result.riskScore}/100
               </strong>
             </div>
 
-            {result.reasons
-              ?.length > 0 && (
+            {result.reasons?.length > 0 && (
               <div className="result-list-box">
-                <h3>
-                  Analysis Reasons
-                </h3>
+                <h3>Analysis Reasons</h3>
 
                 <ul>
                   {result.reasons.map(
-                    (
-                      reason,
-                      index
-                    ) => (
-                      <li
-                        key={index}
-                      >
+                    (reason, index) => (
+                      <li key={index}>
                         {reason}
                       </li>
                     )
@@ -274,23 +254,14 @@ export default function AITextScanner({
               </div>
             )}
 
-            {result
-              .suspiciousElements
-              ?.length > 0 && (
+            {result.suspiciousElements?.length > 0 && (
               <div className="result-list-box">
-                <h3>
-                  Suspicious Elements
-                </h3>
+                <h3>Suspicious Elements</h3>
 
                 <ul>
                   {result.suspiciousElements.map(
-                    (
-                      item,
-                      index
-                    ) => (
-                      <li
-                        key={index}
-                      >
+                    (item, index) => (
+                      <li key={index}>
                         {item}
                       </li>
                     )
@@ -300,38 +271,23 @@ export default function AITextScanner({
             )}
 
             <div className="recommendation-box">
-              <h3>
-                Recommendation
-              </h3>
-
-              <p>
-                {
-                  result.recommendation
-                }
-              </p>
+              <h3>Recommendation</h3>
+              <p>{result.recommendation}</p>
             </div>
 
             <button
               className="report-btn"
               onClick={() =>
-                downloadSecurityReport(
-                  {
-                    title: `${type} Security Analysis`,
-                    type,
-                    input:
-                      content,
-                    riskScore:
-                      result.riskScore,
-                    riskLevel:
-                      result.riskLevel,
-                    summary:
-                      result.summary,
-                    reasons:
-                      result.reasons,
-                    recommendation:
-                      result.recommendation,
-                  }
-                )
+                downloadSecurityReport({
+                  title: `${type} Security Analysis`,
+                  type,
+                  input: content,
+                  riskScore: result.riskScore,
+                  riskLevel: result.riskLevel,
+                  summary: result.summary,
+                  reasons: result.reasons,
+                  recommendation: result.recommendation
+                })
               }
             >
               Download PDF Report
@@ -339,12 +295,13 @@ export default function AITextScanner({
 
             {saved && (
               <p className="scan-saved-message">
-                Scan saved to
-                history successfully.
+                Scan saved to history successfully.
               </p>
             )}
+
           </section>
         )}
+
       </div>
     </main>
   );
